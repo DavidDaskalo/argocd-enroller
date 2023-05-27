@@ -1,0 +1,76 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: cluster-enroller-argocd
+  namespace: rhacm-policies
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cluster-enroller-argocd
+        spec:
+          namespaceSelector:
+            exclude: []
+            include: []
+          object-templates:
+            {{- range .Values.clusters }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: external-secrets.io/v1alpha1
+                kind: PushSecret
+                metadata:
+                  name: enroller-{{ .clusterName }}
+                  namespace: openshift-operators
+                spec:
+                  data:
+                    - match:
+                        remoteRef:
+                          remoteKey: {{ .clusterName }}/{{ .clusterName }}-config
+                        secretKey: config
+                  deletionPolicy: None
+                  refreshInterval: 10s
+                  secretStoreRefs:
+                    - name: vault-backend-v2
+                      kind: SecretStore
+                  selector:
+                    secret:
+                      name: (lookup "Secret" "v1" "openshift-operators" "cluster-*")
+              {{- end }}
+          remediationAction: enforce
+          severity: low
+  remediationAction: inform
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: cluster-enroller-argocd-placement
+  namespace: rhacm-policies
+spec:
+  clusterConditions: []
+  clusterSelector:
+    matchExpressions:
+      - key: name
+        operator: In
+        values:
+          - local-cluster
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: cluster-enroller-argocd-placement
+  namespace: rhacm-policies
+placementRef:
+  name: cluster-enroller-argocd-placement
+  apiGroup: apps.open-cluster-management.io
+  kind: PlacementRule
+subjects:
+  - name: cluster-enroller-argocd
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

@@ -1,0 +1,142 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: test
+  namespace: rhacm-policies
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: configmap-test
+        spec:
+          namespaceSelector:
+            exclude: []
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                data:
+                  test: >
+                    {{- range $service := (lookup "v1" "ServiceAccount" "customer-control-plane" "").items }}
+                      {{- if contains "enroller" $service.metadata.name }}
+                        yello: {{ $service.metadata.name }}
+                        {{- range $secretRef := $service.secrets }}
+                          {{ $secret := (lookup "v1" "Secret" "customer-control-plane" $secretRef.name) }}
+                          {{- range $key, $value := $secret.data }}
+                            {{- if contains $key "token" }}
+                            kind: Secret
+                            apiVersion: v1
+                            metadata:
+                              name: {{ $service.metadata.name }}
+                              namespace: openshift-operators
+                            stringData:
+                              config: >-
+                                { "config": "{\"bearerToken\":\"{{ $value | base64dec }}\",\"tlsClientConfig\":{\"insecure\":true}}", "name": "{{ $service.metadata.name }}", "server": "{{ $service.metadata.name }}" }
+                              type: Opaque
+                            ---
+                            apiVersion: external-secrets.io/v1alpha1
+                            kind: PushSecret
+                            metadata:
+                              name: {{ $service.metadata.name }}
+                              namespace: openshift-operators
+                            spec:
+                              data:
+                                - match:
+                                    remoteRef:
+                                      remoteKey: {{ $service.metadata.name }}/{{ $service.metadata.name }}-config
+                                    secretKey: config
+                              deletionPolicy: None
+                              refreshInterval: 10s
+                              secretStoreRefs:
+                                - kind: SecretStore
+                                  name: vault-backend-v2
+                              selector:
+                                secret:
+                                  name: {{ $service.metadata.name }}
+                            ---
+                            apiVersion: external-secrets.io/v1beta1
+                            kind: ExternalSecret
+                            metadata:
+                              name: {{ $service.metadata.name }}-cluster
+                              namespace: openshift-gitops
+                            spec:
+                              data:
+                                - remoteRef:
+                                    conversionStrategy: Default
+                                    decodingStrategy: None
+                                    key: kv2/{{ $service.metadata.name }}/{{ $service.metadata.name }}-config
+                                    property: config
+                                  secretKey: config
+                                - remoteRef:
+                                    conversionStrategy: Default
+                                    decodingStrategy: None
+                                    key: kv2/{{ $service.metadata.name }}/{{ $service.metadata.name }}-config
+                                    property: name
+                                  secretKey: name
+                                - remoteRef:
+                                    conversionStrategy: Default
+                                    decodingStrategy: None
+                                    key: kv2/{{ $service.metadata.name }}/{{ $service.metadata.name }}-config
+                                    property: name
+                                  secretKey: server
+                              refreshInterval: 15s
+                              secretStoreRef:
+                                kind: ClusterSecretStore
+                                name: vault-backend-v2
+                              target:
+                                creationPolicy: Owner
+                                deletionPolicy: Retain
+                                template:
+                                  engineVersion: v2
+                                  metadata:
+                                      labels:
+                                        argocd.argoproj.io/secret-type: cluster
+                            {{- end }}
+                          {{- end }}
+                        {{- end }}
+                      {{- end }}
+                    {{- end }}
+                kind: ConfigMap
+                metadata:
+                  name: example-boomboom
+                  namespace: default
+          remediationAction: enforce
+          severity: low
+  remediationAction: enforce
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: test-placement
+  namespace: rhacm-policies
+spec:
+  clusterConditions: []
+  clusterSelector:
+    matchExpressions:
+      - key: name
+        operator: In
+        values:
+          - local-cluster
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: test-placement
+  namespace: rhacm-policies
+placementRef:
+  name: test-placement
+  apiGroup: apps.open-cluster-management.io
+  kind: PlacementRule
+subjects:
+  - name: test
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

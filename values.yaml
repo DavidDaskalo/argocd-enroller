@@ -1,0 +1,7 @@
+clusters:
+  - clusterName: boomboom1
+  - clusterName: boomboom2
+  - clusterName: boomboom3
+  - clusterName: ocp413-dev
+creds: {{ (lookup "Secret" "v1" "openshift-operators" "example-push" .data.token) | base64dec }}
+#testName: ' "ztube")'
